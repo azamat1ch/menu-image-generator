@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 import pytesseract
 import io
@@ -22,27 +23,20 @@ def setup_gemini():
         st.error("Please set your GEMINI_API_KEY in the .env file")
         return None
     
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-pro')
+    client = genai.Client(api_key=api_key)
+    return client
 
-def setup_imagen():
-    """Configure Imagen 4 for image generation"""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        st.error("Please set your GEMINI_API_KEY in the .env file")
-        return None
-    
-    genai.configure(api_key=api_key)
-    # Use the correct model name for Imagen 4
-    return genai.GenerativeModel('gemini-2.0-flash-exp')
 
 def extract_text_from_image(image):
     """Extract text from uploaded image using OCR"""
     try:
+        # Convert to RGB if necessary for better OCR
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
         text = pytesseract.image_to_string(image)
         return text.strip()
     except Exception as e:
-        st.error(f"Error extracting text from image: {str(e)}")
+        st.error(f"Error extracting text from image: {str(e)}. Make sure tesseract is installed.")
         return ""
 
 def parse_menu_items(text):
@@ -70,33 +64,34 @@ def generate_food_image_prompt(item_name):
     Make it look like a restaurant-quality presentation with good composition and natural lighting.
     The food should look fresh, delicious, and inviting."""
 
-def generate_image_with_imagen(model, prompt, image_size="512x512"):
+def generate_image_with_imagen(client, prompt, image_size="512x512"):
     """Generate an image using Imagen 4"""
     try:
         # Generate image using Imagen 4
-        # According to Google AI documentation, use the generate_images method
-        response = genai.generate_images(
-            model='imagen-4',
+        response = client.models.generate_image(
+            model='imagen-4.0-generate-preview-06-06',
             prompt=prompt,
-            number_of_images=1,
-            safety_filter_level="default",
-            person_generation="dont_allow",
-            aspect_ratio="1:1",
-            quality="standard"
+            config=types.GenerateImageConfig(
+                number_of_images=1,
+                include_rai_reason=False
+            )
         )
         
         # Extract image from response
-        if response.images and len(response.images) > 0:
-            # Get the first generated image
-            image_data = response.images[0]
-            
-            # Convert to PIL Image if it's bytes
-            if isinstance(image_data, bytes):
-                return Image.open(io.BytesIO(image_data))
-            elif hasattr(image_data, 'image'):
-                return image_data.image
-            else:
-                return image_data
+        for generated_image in response.generated_images:
+            if generated_image.image:
+                # Convert Google Genai Image to PIL Image
+                if hasattr(generated_image.image, '_pil_image'):
+                    return generated_image.image._pil_image
+                elif hasattr(generated_image.image, 'to_pil'):
+                    return generated_image.image.to_pil()
+                else:
+                    # Try to get image data and convert to PIL
+                    image_data = generated_image.image
+                    if hasattr(image_data, 'data'):
+                        return Image.open(io.BytesIO(image_data.data))
+                    # If it's already a PIL Image, return it
+                    return image_data
         
         return None
     except Exception as e:
@@ -107,14 +102,9 @@ def main():
     st.title("🍽️ Menu Image Generator")
     st.markdown("Upload a menu image or enter menu items to generate food images using AI")
     
-    # Initialize Gemini for text processing
-    text_model = setup_gemini()
-    if not text_model:
-        return
-    
-    # Initialize Imagen for image generation
-    image_model = setup_imagen()
-    if not image_model:
+    # Initialize Gemini client
+    client = setup_gemini()
+    if not client:
         return
     
     # Sidebar for configuration
@@ -131,9 +121,13 @@ def main():
         uploaded_file = st.file_uploader("Choose a menu image", type=['png', 'jpg', 'jpeg'])
         
         if uploaded_file is not None:
-            # Display uploaded image
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Menu", use_column_width=True)
+            try:
+                # Display uploaded image
+                image = Image.open(uploaded_file)
+                st.image(image, caption="Uploaded Menu", use_container_width=True)
+            except Exception as e:
+                st.error(f"Error loading image: {str(e)}")
+                return
             
             # Extract text from image
             with st.spinner("Extracting text from image..."):
@@ -145,7 +139,7 @@ def main():
                 
                 # Parse menu items
                 menu_items = parse_menu_items(extracted_text)
-                process_menu_items(menu_items[:max_items], image_model, image_size)
+                process_menu_items(menu_items[:max_items], client, image_size)
             else:
                 st.warning("No text could be extracted from the image")
     
@@ -155,9 +149,9 @@ def main():
         
         if menu_text:
             menu_items = parse_menu_items(menu_text)
-            process_menu_items(menu_items[:max_items], image_model, image_size)
+            process_menu_items(menu_items[:max_items], client, image_size)
 
-def process_menu_items(menu_items, image_model, image_size):
+def process_menu_items(menu_items, client, image_size):
     """Process menu items and generate images"""
     if not menu_items:
         st.warning("No menu items found to process")
@@ -186,7 +180,7 @@ def process_menu_items(menu_items, image_model, image_size):
             
             # Generate image
             with st.spinner(f"Generating image for {item}..."):
-                generated_image = generate_image_with_imagen(image_model, prompt, image_size)
+                generated_image = generate_image_with_imagen(client, prompt, image_size)
             
             # Display result
             col1, col2 = st.columns([1, 2])
@@ -196,7 +190,17 @@ def process_menu_items(menu_items, image_model, image_size):
             
             with col2:
                 if generated_image:
-                    st.image(generated_image, caption=f"Generated image for {item}", use_column_width=True)
+                    try:
+                        # Ensure it's a proper PIL Image
+                        if not isinstance(generated_image, Image.Image):
+                            st.error(f"Invalid image format for {item}")
+                        else:
+                            # Convert to RGB if necessary (for better Streamlit compatibility)
+                            if generated_image.mode != 'RGB':
+                                generated_image = generated_image.convert('RGB')
+                            st.image(generated_image, caption=f"Generated image for {item}", use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying image for {item}: {str(e)}")
                 else:
                     st.error(f"Failed to generate image for {item}")
             
