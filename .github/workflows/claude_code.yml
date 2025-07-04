@@ -41,4 +41,5 @@ jobs:
           claude_refresh_token: ${{ secrets.CLAUDE_REFRESH_TOKEN }}
           claude_expires_at: ${{ secrets.CLAUDE_EXPIRES_AT }}
           secrets_admin_pat: ${{ secrets.SECRETS_ADMIN_PAT }}
+          model: "claude-sonnet-4-20250514"
           timeout_minutes: "60"
