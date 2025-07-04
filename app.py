@@ -25,6 +25,17 @@ def setup_gemini():
     genai.configure(api_key=api_key)
     return genai.GenerativeModel('gemini-pro')
 
+def setup_imagen():
+    """Configure Imagen 4 for image generation"""
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        st.error("Please set your GEMINI_API_KEY in the .env file")
+        return None
+    
+    genai.configure(api_key=api_key)
+    # Use the correct model name for Imagen 4
+    return genai.GenerativeModel('gemini-2.0-flash-exp')
+
 def extract_text_from_image(image):
     """Extract text from uploaded image using OCR"""
     try:
@@ -59,13 +70,51 @@ def generate_food_image_prompt(item_name):
     Make it look like a restaurant-quality presentation with good composition and natural lighting.
     The food should look fresh, delicious, and inviting."""
 
+def generate_image_with_imagen(model, prompt, image_size="512x512"):
+    """Generate an image using Imagen 4"""
+    try:
+        # Generate image using Imagen 4
+        # According to Google AI documentation, use the generate_images method
+        response = genai.generate_images(
+            model='imagen-4',
+            prompt=prompt,
+            number_of_images=1,
+            safety_filter_level="default",
+            person_generation="dont_allow",
+            aspect_ratio="1:1",
+            quality="standard"
+        )
+        
+        # Extract image from response
+        if response.images and len(response.images) > 0:
+            # Get the first generated image
+            image_data = response.images[0]
+            
+            # Convert to PIL Image if it's bytes
+            if isinstance(image_data, bytes):
+                return Image.open(io.BytesIO(image_data))
+            elif hasattr(image_data, 'image'):
+                return image_data.image
+            else:
+                return image_data
+        
+        return None
+    except Exception as e:
+        st.error(f"Error generating image: {str(e)}")
+        return None
+
 def main():
     st.title("🍽️ Menu Image Generator")
     st.markdown("Upload a menu image or enter menu items to generate food images using AI")
     
-    # Initialize Gemini
-    model = setup_gemini()
-    if not model:
+    # Initialize Gemini for text processing
+    text_model = setup_gemini()
+    if not text_model:
+        return
+    
+    # Initialize Imagen for image generation
+    image_model = setup_imagen()
+    if not image_model:
         return
     
     # Sidebar for configuration
@@ -96,7 +145,7 @@ def main():
                 
                 # Parse menu items
                 menu_items = parse_menu_items(extracted_text)
-                process_menu_items(menu_items[:max_items], model)
+                process_menu_items(menu_items[:max_items], image_model, image_size)
             else:
                 st.warning("No text could be extracted from the image")
     
@@ -106,9 +155,9 @@ def main():
         
         if menu_text:
             menu_items = parse_menu_items(menu_text)
-            process_menu_items(menu_items[:max_items], model)
+            process_menu_items(menu_items[:max_items], image_model, image_size)
 
-def process_menu_items(menu_items, model):
+def process_menu_items(menu_items, image_model, image_size):
     """Process menu items and generate images"""
     if not menu_items:
         st.warning("No menu items found to process")
@@ -121,20 +170,40 @@ def process_menu_items(menu_items, model):
         st.write(f"{i+1}. {item}")
     
     if st.button("Generate Images", type="primary"):
-        # Note: Gemini Pro doesn't support image generation yet
-        # This is a placeholder for when image generation becomes available
-        st.info("🚧 Image generation feature coming soon!")
-        st.markdown("Currently, Gemini Pro doesn't support image generation. This feature will be available when Google releases Gemini Pro Vision with image generation capabilities.")
+        st.subheader("Generated Images")
         
-        # For now, show what would be generated
-        st.subheader("Preview: Items to Generate")
-        cols = st.columns(2)
+        # Create progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
+        # Generate images for each menu item
         for i, item in enumerate(menu_items):
-            with cols[i % 2]:
+            status_text.text(f"Generating image for: {item}")
+            progress_bar.progress((i + 1) / len(menu_items))
+            
+            # Generate prompt
+            prompt = generate_food_image_prompt(item)
+            
+            # Generate image
+            with st.spinner(f"Generating image for {item}..."):
+                generated_image = generate_image_with_imagen(image_model, prompt, image_size)
+            
+            # Display result
+            col1, col2 = st.columns([1, 2])
+            with col1:
                 st.markdown(f"**{item}**")
-                st.markdown(f"*Prompt: {generate_food_image_prompt(item)}*")
-                st.markdown("---")
+                st.markdown(f"*Size: {image_size}*")
+            
+            with col2:
+                if generated_image:
+                    st.image(generated_image, caption=f"Generated image for {item}", use_column_width=True)
+                else:
+                    st.error(f"Failed to generate image for {item}")
+            
+            st.markdown("---")
+        
+        status_text.text("Image generation complete!")
+        st.success(f"Generated {len(menu_items)} images successfully!")
 
 if __name__ == "__main__":
     main()
