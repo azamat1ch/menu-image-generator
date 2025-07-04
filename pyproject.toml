@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "menu-image-generator"
+version = "0.1.0"
+description = "A Streamlit app that generates images for menu items using Gemini API"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "menu_image_generator"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+streamlit = "^1.28.0"
+google-generativeai = "^0.3.0"
+pillow = "^10.0.0"
+python-dotenv = "^1.0.0"
+pytesseract = "^0.3.10"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0.0"
+black = "^23.0.0"
+flake8 = "^6.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
